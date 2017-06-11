@@ -1,0 +1,90 @@
+#!/bin/sh
+
+START=95
+
+SERVICE_USE_PID=1
+SERVICE_WRITE_PID=1
+SERVICE_DAEMONIZE=1
+SERVICE_PID_FILE=/var/run/adblock.pid
+
+HOSTNAME="192.168.1.150"
+IP=`nslookup ${HOSTNAME} 127.0.0.1 | awk 'NR==5 { print $3 }'`
+PORT=8118
+
+pingcmd()
+{
+	prefix="SERVER PING $1"
+	ping -w 1 -c 1 $1>/dev/null
+	ret=$?
+	if [ $ret -eq 0 ];then
+	  printf "$prefix\t OK\n"
+	  return 0
+	else
+	  printf "$prefix\t ERROR\n"
+	fi
+	return 1
+}
+
+init_iptables() {
+	echo "init iptables rules..."
+	# create ipset                                                                                                                 
+        ipset create adblock iphash -exist
+	# create chain
+	iptables -t nat -N KOOLPROXY
+	iptables -t nat -A KOOLPROXY -p tcp -s ${IP} -m set --match-set adblock dst -j RETURN
+	iptables -t nat -A KOOLPROXY -p tcp -m set --match-set adblock dst -m multiport --dports 80,443 -j DNAT --to-destination ${IP}:${PORT}
+	iptables -t nat -A POSTROUTING -p tcp -d ${IP} --dport ${PORT} -j MASQUERADE
+}
+
+start() {
+	echo "starting adblock iptable..."
+
+	iptables -t nat -L KOOLPROXY>/dev/null
+	if [ $? -eq 0 ];then
+	  echo "had init config iptables"
+	else
+	  init_iptables
+	fi
+	
+	HASINSERT=`iptables -t nat -L PREROUTING |grep -i KOOLPROXY|wc -l`
+	if [ $HASINSERT -le 0 ]; then
+	  echo "insert KOOLPROXY to PREROUTING..."
+	  iptables -t nat -I PREROUTING 2 -p tcp -j KOOLPROXY
+	fi
+}
+
+stop() {
+	echo "stoping adblock iptable..."
+	iptables -t nat -D PREROUTING -p tcp -j KOOLPROXY
+	killall adblock
+}
+
+daemon() {
+	while [ true ]
+	do
+	  pingcmd $IP
+	  ret=$?
+	  if [ $ret -ne 0 ];then
+	    echo "miss ping...stop service!"
+	    stop
+	    break
+	  fi
+	  sleep 5
+	done;
+}
+
+
+case "$1" in 
+     daemon)
+	daemon
+     ;;
+     start)
+	start
+     ;;
+     stop)
+	stop 
+     ;;
+     *)
+	echo "adblock start|stop|daemon"
+     ;;
+esac

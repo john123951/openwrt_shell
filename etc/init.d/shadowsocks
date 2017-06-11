@@ -1,0 +1,37 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+
+SERVICE_USE_PID=1
+SERVICE_WRITE_PID=1
+SERVICE_DAEMONIZE=1
+SERVICE_PID_FILE=/var/run/shadowsocks.pid
+
+CONFIG=/etc/shadowsocks.json
+UDP_CONFIG=/etc/shadowsocks_udp.json
+
+config_iptables() {
+	iptables -t nat -I PREROUTING -p tcp -m set --match-set blackdomain dst -j REDIRECT --to-ports 1080
+}
+
+start_tunnel() {
+	echo "starting tunnel..."
+	ss-tunnel -c $CONFIG -l 5300 -L 8.8.4.4:53 -u -b 0.0.0.0&
+}
+
+start() {
+	# create ipset
+	ipset create blackdomain iphash -exist
+	# iptables
+	iptables -t nat -I PREROUTING -p tcp -m set --match-set blackdomain dst -j REDIRECT --to-ports 1080
+	#service_start /usr/bin/ss-local -c $CONFIG -b 0.0.0.0
+	service_start /usr/bin/ss-redir -c $CONFIG -b 0.0.0.0 -f $SERVICE_PID_FILE
+	service_start /usr/bin/ss-tunnel -c $UDP_CONFIG -b 0.0.0.0 -l 5300 -L 8.8.8.8:53 -u
+}
+
+stop() {
+	iptables -t nat -D PREROUTING -p tcp -m set --match-set blackdomain dst -j REDIRECT --to-ports 1080
+	#service_stop /usr/bin/ss-local
+	service_stop /usr/bin/ss-redir
+	service_stop /usr/bin/ss-tunnel
+}
